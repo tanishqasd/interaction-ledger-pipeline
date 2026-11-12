@@ -216,3 +216,50 @@ class EventTests(unittest.TestCase):
             data = path.read_bytes()
             for secret in (payload_secret, PHONE, "+919876543210", "9876543210", "SYNTHETIC-LEAD-CUSTOMER"):
                 self.assertNotIn(secret.encode("utf-8"), data)
+
+    def test_same_call_id_in_two_workflows_keeps_overrides_separate(self):
+        self.write_leads("drop", [["Synthetic lead", PHONE, "MOTOR-REF"]], workflow=MOTOR)
+        self.write_leads("drop", [["Synthetic lead", PHONE, "FEEDBACK-REF"]], workflow=FEEDBACK)
+        self.write_events("drop", [
+            event("motor-override", "disposition.override", phone=None, code="renewed"),
+            event("motor-init", "call.initiated"),
+            event("feedback-init", "call.initiated", workflow=FEEDBACK),
+            event("feedback-set", "disposition.set", code="partial_feedback", workflow=FEEDBACK),
+        ])
+        self.ingest("drop")
+        snapshot = derive_interactions(self.connection)
+        self.assertEqual(snapshot.orphan_events, 0)
+        self.assertEqual(snapshot.unknown_disposition_events, 0)
+        by_workflow = {row["workflow_id"]: snapshot.calls_by_lead[row["lead_id"]][0].disposition.code
+                       for row in self.connection.execute("SELECT workflow_id, lead_id FROM leads")}
+        self.assertEqual(by_workflow, {MOTOR: "renewed", FEEDBACK: "partial_feedback"})
+
+    def test_process_exit_mid_drop_recovers_and_allows_retry(self):
+        self.write_leads("drop", [["Synthetic lead", PHONE, "POL-1"]])
+        self.write_events("drop", [event("original", "call.initiated")])
+        worker = """
+import os
+import sys
+from pathlib import Path
+from solution import ingest
+from solution.db import connect
+from solution.privacy import Privacy
+
+original = ingest.ingest_event_file
+
+def abort_after_events(*args, **kwargs):
+    original(*args, **kwargs)
+    os._exit(37)
+
+ingest.ingest_event_file = abort_after_events
+ingest.ingest_drop(connect(Path(sys.argv[1])), Privacy(bytes(range(32))), Path(sys.argv[2]))
+"""
+        crashed = subprocess.run([sys.executable, "-c", worker, str(self.db), str(self.root / "drop")],
+                                 cwd=ROOT, capture_output=True, text=True, check=False)
+        self.assertEqual(crashed.returncode, 37, crashed.stderr)
+        for table in ("ingested_drops", "leads", "events"):
+            self.assertEqual(self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+        retried = self.run_ingest("drop")
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        self.assertEqual(self.connection.execute("SELECT event_id FROM events").fetchone()[0], "original")
+        self.assertIsNone(self.ingest("drop"))

@@ -10,8 +10,8 @@ $ledgerPython = '.\.venv\Scripts\python.exe'
 & $ledgerPython -m unittest discover -s solution/tests -v
 ```
 
-The test suite runs ingestion and reporting on seeds 42 and 2026 in temporary
-directories. To run the full workflow yourself, use a fresh database:
+The test suite checks every report against expectations calculated from the raw
+inputs on seeds 42, 2026 and 73129. To run the workflow yourself, use a fresh database:
 
 ```powershell
 # Generate a secret once for a new local database. Keep it in a password
@@ -64,6 +64,8 @@ summaries include groups that own at least one lead; rejection counts by reason
 include only reasons that occurred. Connectivity rates use half-even rounding.
 Report reruns replace the five named files and leave other output files alone.
 
-Use the same `LEDGER_MASTER_KEY` when ingesting into an existing database. Keep it out of Git;
-the starter ignore rules already cover `.venv`, `data`, `.sqlite3` files and
-their sidecar files.
+Use the same `LEDGER_MASTER_KEY` when ingesting into an existing database. Keep
+it in a password manager or, if a local key file is unavoidable, under the
+ignored `solution/secrets/` directory. The application does not read key files.
+Use the `.sqlite3` extension so the starter ignore rules cover the database and
+its sidecar files. Generated data, reports and `.venv` are ignored as well.
