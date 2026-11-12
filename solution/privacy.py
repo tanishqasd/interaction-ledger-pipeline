@@ -35,11 +35,22 @@ class Privacy:
     def manifest_digest(self, manifest: bytes) -> bytes:
         return hmac.digest(self._manifest_key, manifest, "sha256")
 
-    def encrypt_lead(self, workflow_id: str, phone_token: bytes, fields: dict[str, str | None]) -> bytes:
+    def _encrypt(self, plaintext: bytes, context: bytes) -> bytes:
         nonce = secrets.token_bytes(_NONCE_SIZE)
+        return nonce + self._cipher.encrypt(nonce, plaintext, context)
+
+    def _decrypt(self, blob: bytes, context: bytes) -> bytes:
+        return self._cipher.decrypt(blob[:_NONCE_SIZE], blob[_NONCE_SIZE:], context)
+
+    def encrypt_lead(self, workflow_id: str, phone_token: bytes, fields: dict[str, str | None]) -> bytes:
         plaintext = json.dumps(fields, ensure_ascii=False).encode("utf-8")
-        return nonce + self._cipher.encrypt(nonce, plaintext, _lead_context(workflow_id, phone_token))
+        return self._encrypt(plaintext, _lead_context(workflow_id, phone_token))
 
     def decrypt_lead(self, workflow_id: str, phone_token: bytes, blob: bytes) -> dict[str, str | None]:
-        nonce, ciphertext = blob[:_NONCE_SIZE], blob[_NONCE_SIZE:]
-        return json.loads(self._cipher.decrypt(nonce, ciphertext, _lead_context(workflow_id, phone_token)))
+        return json.loads(self._decrypt(blob, _lead_context(workflow_id, phone_token)))
+
+    def encrypt_event(self, event_id: str, body: bytes) -> bytes:
+        return self._encrypt(body, b"event\0" + event_id.encode("utf-8"))
+
+    def decrypt_event(self, event_id: str, blob: bytes) -> bytes:
+        return self._decrypt(blob, b"event\0" + event_id.encode("utf-8"))
