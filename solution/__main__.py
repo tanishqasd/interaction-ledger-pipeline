@@ -14,6 +14,7 @@ from .ingest import ingest_drop, ingest_lead_drop
 from .keys import KeyConfigurationError, load_master_key
 from .leads import LeadInputError
 from .privacy import Privacy
+from .reports import write_reports
 
 
 def _ingest(args: argparse.Namespace, master_key: bytes) -> None:
@@ -44,13 +45,20 @@ def main(argv: list[str] | None = None) -> int:
     init = commands.add_parser("init", help="Initialize or verify a SQLite ledger")
     ingest = commands.add_parser("ingest", help="Import lead CSVs and JSONL events from one or more drops")
     lead_only = commands.add_parser("ingest-leads", help="Import only the lead CSVs from one or more drops")
+    report = commands.add_parser("report", help="Write the five reports from the current ledger")
+    report.add_argument("--out", type=Path, required=True, help="Report output directory")
     for command in (ingest, lead_only):
         command.add_argument("drops", nargs="+", type=Path, help="Drop directories in ingest order")
-    for command in (init, ingest, lead_only):
+    for command in (init, ingest, lead_only, report):
         command.add_argument("--db", type=Path, default=Path("ledger.sqlite3"), help="SQLite database path")
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "report":
+            write_reports(args.db, args.out)
+            print(f"Wrote five reports to {args.out}")
+            return 0
+
         master_key = load_master_key()
         created = initialize(args.db, master_key)
         if args.command == "init":

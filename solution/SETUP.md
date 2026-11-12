@@ -10,19 +10,26 @@ $ledgerPython = '.\.venv\Scripts\python.exe'
 & $ledgerPython -m unittest discover -s solution/tests -v
 ```
 
-The test suite runs the official generator with seeds 42 and 2026 in temporary
-directories. To try the full ingest command yourself, use a fresh database:
+The test suite runs ingestion and reporting on seeds 42 and 2026 in temporary
+directories. To run the full workflow yourself, use a fresh database:
 
 ```powershell
 # Generate a secret once for a new local database. Keep it in a password
 # manager if you need to open that database in another session.
 $env:LEDGER_MASTER_KEY = (& $ledgerPython -c "import base64, secrets; print(base64.b64encode(secrets.token_bytes(32)).decode('ascii'))")
-& $ledgerPython assignment-a-data/tools/generate_data.py --seed 42 --scale small --out data/event-check
-& $ledgerPython -m solution init --db data/event-check/ledger.sqlite3
-& $ledgerPython -m solution ingest data/event-check/drop_1 data/event-check/drop_2 --db data/event-check/ledger.sqlite3
-$before = (Get-FileHash -LiteralPath 'data/event-check/ledger.sqlite3').Hash
-& $ledgerPython -m solution ingest data/event-check/drop_1 data/event-check/drop_2 --db data/event-check/ledger.sqlite3
-if ($before -ne (Get-FileHash -LiteralPath 'data/event-check/ledger.sqlite3').Hash) { throw 'Replay changed the database.' }
+$runDir = 'data/report-check'
+$dbPath = "$runDir/ledger.sqlite3"
+$reports = "$runDir/reports"
+& $ledgerPython assignment-a-data/tools/generate_data.py --seed 42 --scale small --out $runDir
+& $ledgerPython -m solution init --db $dbPath
+& $ledgerPython -m solution ingest "$runDir/drop_1" "$runDir/drop_2" --db $dbPath
+$before = (Get-FileHash -LiteralPath $dbPath).Hash
+& $ledgerPython -m solution report --out $reports --db $dbPath
+$firstReports = Get-FileHash -Path "$reports/*"
+& $ledgerPython -m solution ingest "$runDir/drop_1" "$runDir/drop_2" --db $dbPath
+& $ledgerPython -m solution report --out $reports --db $dbPath
+if (Compare-Object $firstReports (Get-FileHash -Path "$reports/*") -Property Path, Hash) { throw 'Report hashes changed.' }
+if ($before -ne (Get-FileHash -LiteralPath $dbPath).Hash) { throw 'Reporting or replay changed the database.' }
 ```
 
 `init` loads the workflow schemas and disposition catalogue for a new database.
@@ -52,6 +59,11 @@ invalid phone stays orphaned, and an unknown disposition counts only after
 linking. Naive timestamps use IST. Equal disposition times are broken by event
 ID; if a call has several initiations, the earliest linked initiation wins.
 
-Use the same `LEDGER_MASTER_KEY` when reopening a database. Keep it out of Git;
+`report` reads one SQLite snapshot and does not need the encryption key. Batch
+summaries include groups that own at least one lead; rejection counts by reason
+include only reasons that occurred. Connectivity rates use half-even rounding.
+Report reruns replace the five named files and leave other output files alone.
+
+Use the same `LEDGER_MASTER_KEY` when ingesting into an existing database. Keep it out of Git;
 the starter ignore rules already cover `.venv`, `data`, `.sqlite3` files and
 their sidecar files.

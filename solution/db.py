@@ -17,8 +17,9 @@ class DatabaseError(RuntimeError):
     pass
 
 
-def connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path)
+def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    database = path.resolve().as_uri() + "?mode=ro" if read_only else path
+    connection = sqlite3.connect(database, uri=read_only)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     # REPLACE can delete the existing row; recursive triggers also guard that path.
